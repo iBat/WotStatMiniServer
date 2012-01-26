@@ -66,34 +66,49 @@ namespace wotStatMiniServer
         }
 
         private void GetCachedMember(string member) {
-            if(cache.ContainsKey(member))
+            if(cache.ContainsKey(member)) {
+                member currentMember = cache[member];
+                if(!currentMember.httpError) {
+                    Console.WriteLine("CACHE");
+                    return;
+                }
+                if(DateTime.Now.Subtract(currentMember.errorTime).Minutes < 5)
+                    return;
+                cache.Remove(member);
+            }
+
+            if(ServiceUnavailable())
                 return;
 
-            proxyUrl = GetProxyUrl();
-            string url = string.Format("http://{0}/{1}.{2}", proxyUrl, member.ToUpper(), "xml");
+            try {
+                proxyUrl = GetProxyUrl();
+                string url = string.Format("http://{0}/{1}.{2}", proxyUrl, member.ToUpper(), "xml");
 
-            WebRequest request = WebRequest.Create(url);
-            request.Credentials = CredentialCache.DefaultCredentials;
-            request.Timeout = 1000;
-            HttpWebResponse response = (HttpWebResponse)request.GetResponse();
-            Console.WriteLine("HTTP status: {0}", response.StatusCode);
-            Stream dataStream = response.GetResponseStream();
-            StreamReader reader = new StreamReader(dataStream);
-            string responseFromServer = reader.ReadToEnd();
-            reader.Close();
-            dataStream.Close();
-            response.Close();
-
-            cache.Add(member, new member(responseFromServer));
+                WebRequest request = WebRequest.Create(url);
+                request.Credentials = CredentialCache.DefaultCredentials;
+                request.Timeout = 1000;
+                HttpWebResponse response = (HttpWebResponse) request.GetResponse();
+                Console.WriteLine("HTTP status: {0}", response.StatusCode);
+                Stream dataStream = response.GetResponseStream();
+                StreamReader reader = new StreamReader(dataStream);
+                string responseFromServer = reader.ReadToEnd();
+                reader.Close();
+                dataStream.Close();
+                response.Close();
+                cache.Add(member, new member(responseFromServer));
+            } catch(Exception) {
+                ErrorHandle();
+                member newMember = new member("<user battles=\"1\" wins=\"0\"></user>");
+                newMember.httpError = true;
+                newMember.errorTime = DateTime.Now;
+                cache.Add(member, newMember);
+            }
         }
 
         public int ReadFile(String filename, Byte[] buffer, ref uint readBytes, long offset, DokanFileInfo info) {
             if (Path.GetExtension(filename).ToLower() != ".xml")
                 return -1;
             try {
-                if(ServiceUnavailable())
-                    return -1;
-
                 Console.Error.WriteLine("{0} - ReadFile : {1}", DateTime.Now, filename);
                 
                 string member = Path.GetFileNameWithoutExtension(filename);
@@ -110,16 +125,12 @@ namespace wotStatMiniServer
                 _firstError = false;
                 return 0;
             } catch(Exception) {
-                ErrorHandle();
                 return -1;
             }
         }
 
         public int GetFileInformation(String filename, FileInformation fileinfo, DokanFileInfo info) {
             try {
-                if(ServiceUnavailable())
-                    return -1;
-
                 int fileLength = 0;
                 if(Path.GetExtension(filename).ToLower() == ".xml") {
                     string member = Path.GetFileNameWithoutExtension(filename);
@@ -132,7 +143,6 @@ namespace wotStatMiniServer
                 fileinfo.Length = fileLength;
                 return 0;
             } catch {
-                ErrorHandle();
                 return -1;
             }
         }
