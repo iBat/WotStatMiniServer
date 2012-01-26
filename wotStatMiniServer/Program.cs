@@ -9,26 +9,22 @@ using Dokan;
 namespace wotStatMiniServer
 {
     class StatServer : DokanOperations {
-        private struct member {
-            public string statString;
-            public bool httpError;
-            public DateTime errorTime;
+        private struct Member {
+            public string StatString;
+            public bool HttpError;
+            public DateTime ErrorTime;
 
-            public member(string stat) {
-                this.statString = stat;
-                this.httpError = false;
-                this.errorTime = DateTime.MinValue;
+            public Member(string stat) {
+                StatString = stat;
+                HttpError = false;
+                ErrorTime = DateTime.MinValue;
             }
         }
-        Dictionary<string, member> cache = new Dictionary<string, member>();
+        Dictionary<string, Member> cache = new Dictionary<string, Member>();
         private string proxyUrl;
         private bool _firstError,
             _unavailable;
         private DateTime _unavailableFrom;
-
-        StatServer() {
-            
-        }
 
         private static string GetProxyUrl() {
             Random rnd = new Random(DateTime.Now.Millisecond);
@@ -59,7 +55,7 @@ namespace wotStatMiniServer
             }
         }
 
-        private member GetMemberStat(string member) {
+        private Member GetMemberStat(string member) {
             GetCachedMember(member);
 
             return cache[member];
@@ -67,12 +63,12 @@ namespace wotStatMiniServer
 
         private void GetCachedMember(string member) {
             if(cache.ContainsKey(member)) {
-                member currentMember = cache[member];
-                if(!currentMember.httpError) {
+                Member currentMember = cache[member];
+                if(!currentMember.HttpError) {
                     Console.WriteLine("CACHE");
                     return;
                 }
-                if(DateTime.Now.Subtract(currentMember.errorTime).Minutes < 5)
+                if(DateTime.Now.Subtract(currentMember.ErrorTime).Minutes < 5)
                     return;
                 cache.Remove(member);
             }
@@ -95,12 +91,12 @@ namespace wotStatMiniServer
                 reader.Close();
                 dataStream.Close();
                 response.Close();
-                cache.Add(member, new member(responseFromServer));
+                cache.Add(member, new Member(responseFromServer));
             } catch(Exception) {
                 ErrorHandle();
-                member newMember = new member("<user battles=\"1\" wins=\"0\"></user>");
-                newMember.httpError = true;
-                newMember.errorTime = DateTime.Now;
+                Member newMember = new Member("<user battles=\"1\" wins=\"0\"></user>");
+                newMember.HttpError = true;
+                newMember.ErrorTime = DateTime.Now;
                 cache.Add(member, newMember);
             }
         }
@@ -113,7 +109,7 @@ namespace wotStatMiniServer
                 
                 string member = Path.GetFileNameWithoutExtension(filename);
 
-                string responseText = GetMemberStat(member).statString;
+                string responseText = GetMemberStat(member).StatString;
                 byte[] startSymbols = { 0xEF, 0xBB, 0xBF };
                 byte[] response = Encoding.GetEncoding("iso-8859-1").GetBytes(responseText);
                 var result = new byte[startSymbols.Length + response.Length];
@@ -134,7 +130,7 @@ namespace wotStatMiniServer
                 int fileLength = 0;
                 if(Path.GetExtension(filename).ToLower() == ".xml") {
                     string member = Path.GetFileNameWithoutExtension(filename);
-                    fileLength = GetMemberStat(member).statString.Length + 3;
+                    fileLength = GetMemberStat(member).StatString.Length + 3;
                 }
                 fileinfo.Attributes = FileAttributes.Archive;
                 fileinfo.CreationTime = DateTime.Now;
