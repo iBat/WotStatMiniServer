@@ -5,6 +5,7 @@ using System.IO;
 using System.Net;
 using System.Text;
 using Dokan;
+using System.Configuration;
 
 namespace wotStatMiniServer
 {
@@ -20,16 +21,38 @@ namespace wotStatMiniServer
                 ErrorTime = DateTime.MinValue;
             }
         }
+        private struct Settings {
+            public int Timeout;
+            public int LogLevel;
+        }
         Dictionary<string, Member> cache = new Dictionary<string, Member>();
         private string proxyUrl;
         private bool _firstError,
             _unavailable;
         private DateTime _unavailableFrom;
+        private Settings _settings;
 
-        private static string GetProxyUrl() {
+        public StatServer() {
+            try {
+                _settings.LogLevel = Convert.ToInt32(ConfigurationSettings.AppSettings["logLevel"]);
+                _settings.Timeout = Convert.ToInt32(ConfigurationSettings.AppSettings["timeout"]);
+            } catch {
+                _settings.LogLevel = 1;
+                _settings.Timeout = 1000;
+            }
+            Log(2, string.Format("LogLevel: {0}\r\nTimeout: {1}", _settings.LogLevel, _settings.Timeout));
+        }
+
+        private void Log(int level, string message) {
+            if(level >= _settings.LogLevel) {
+                Console.WriteLine(message);
+            }
+        }
+
+        private string GetProxyUrl() {
             Random rnd = new Random(DateTime.Now.Millisecond);
             string url = string.Format("stat-proxy-{0}.wot.bkon.ru", rnd.Next(1, 10));
-            Console.WriteLine("SET PROXY: {0}", url);
+            Log(0, string.Format("SET PROXY: {0}", url));
             return url;
         }
 
@@ -48,10 +71,10 @@ namespace wotStatMiniServer
                 _unavailable = true;
                 _firstError = false;
                 _unavailableFrom = DateTime.Now;
-                Console.WriteLine("Unavailable since {0}", _unavailableFrom);
+                Log(2, string.Format("Unavailable since {0}", _unavailableFrom));
             } else {
                 _firstError = true;
-                Console.WriteLine("First error {0}", DateTime.Now);
+                Log(2, string.Format("First error {0}", DateTime.Now));
             }
         }
 
@@ -65,7 +88,7 @@ namespace wotStatMiniServer
             if(cache.ContainsKey(member)) {
                 Member currentMember = cache[member];
                 if(!currentMember.HttpError) {
-                    Console.WriteLine("CACHE");
+                    Log(1, string.Format("CACHE - {0}", member));
                     return;
                 }
                 if(DateTime.Now.Subtract(currentMember.ErrorTime).Minutes < 5)
@@ -84,7 +107,7 @@ namespace wotStatMiniServer
                 request.Credentials = CredentialCache.DefaultCredentials;
                 request.Timeout = 1000;
                 HttpWebResponse response = (HttpWebResponse) request.GetResponse();
-                Console.WriteLine("HTTP status: {0}", response.StatusCode);
+                Log(1, string.Format("HTTP - {0}", member));
                 Stream dataStream = response.GetResponseStream();
                 StreamReader reader = new StreamReader(dataStream);
                 string responseFromServer = reader.ReadToEnd();
@@ -92,7 +115,8 @@ namespace wotStatMiniServer
                 dataStream.Close();
                 response.Close();
                 cache.Add(member, new Member(responseFromServer));
-            } catch(Exception) {
+            } catch(Exception e) {
+                Log(1, string.Format("Exception: {0}\r\nPROXY: {1}", e.Message, proxyUrl));
                 ErrorHandle();
                 Member newMember = new Member("<user battles=\"1\" wins=\"0\"></user>");
                 newMember.HttpError = true;
@@ -105,7 +129,7 @@ namespace wotStatMiniServer
             if (Path.GetExtension(filename).ToLower() != ".xml")
                 return -1;
             try {
-                Console.Error.WriteLine("{0} - ReadFile : {1}", DateTime.Now, filename);
+                Log(0, string.Format("{0} - ReadFile : {1}", DateTime.Now, filename));
                 
                 string member = Path.GetFileNameWithoutExtension(filename);
 
