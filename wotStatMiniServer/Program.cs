@@ -105,7 +105,7 @@ namespace wotStatMiniServer
 
                 WebRequest request = WebRequest.Create(url);
                 request.Credentials = CredentialCache.DefaultCredentials;
-                request.Timeout = 1000;
+                request.Timeout = _settings.Timeout;
                 HttpWebResponse response = (HttpWebResponse) request.GetResponse();
                 Log(1, string.Format("HTTP - {0}", member));
                 Stream dataStream = response.GetResponseStream();
