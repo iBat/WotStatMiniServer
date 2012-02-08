@@ -6,6 +6,7 @@ using System.Net;
 using System.Text;
 using Dokan;
 using System.Configuration;
+using System.Xml;
 
 namespace wotStatMiniServer
 {
@@ -26,7 +27,8 @@ namespace wotStatMiniServer
             public int LogLevel;
             public string DriveLetter;
         }
-        Dictionary<string, Member> cache = new Dictionary<string, Member>();
+        private Dictionary<string, Member> cache = new Dictionary<string, Member>();
+        private string[] pendingMembers = { };
         private string proxyUrl;
         private bool _firstError,
             _unavailable;
@@ -37,6 +39,8 @@ namespace wotStatMiniServer
             _settings = settings;
             Log(2, string.Format("LogLevel: {0}\r\nTimeout: {1}", _settings.LogLevel, _settings.Timeout));
         }
+
+        #region service functions
 
         private static Settings LoadSettings() {
             Settings result;
@@ -87,6 +91,9 @@ namespace wotStatMiniServer
             }
         }
 
+        #endregion
+
+        // TODO kill me
         private Member GetMemberStat(string member) {
             GetCachedMember(member);
 
@@ -134,23 +141,69 @@ namespace wotStatMiniServer
             }
         }
 
-        public int ReadFile(String filename, Byte[] buffer, ref uint readBytes, long offset, DokanFileInfo info) {
-            if (Path.GetExtension(filename).ToLower() != ".xml")
-                return -1;
-            try {
-                Log(0, string.Format("{0} - ReadFile : {1}", DateTime.Now, filename));
-                
-                string member = Path.GetFileNameWithoutExtension(filename);
+        /*
+     *  "@LOG <string>" - логгирование строки (как бы замена trace()). Можно не реализовывать.
+        "@SET_USERS player1[,player2,...]" - Установка текущего списка игроков (пробел после команды).
+        "@ADD_USERS player1[,player2,...]" - Добавление игроков к текущему списку (пробел после команды)
+        "@RUN" - запуск запроса на получение статистики
+        "@GET_USERS" - получить текущий список игроков (будет использоваться в OTM)
+        "@GET_LAST_STAT" - получить последнюю полученную статистику
+     * */
 
-                string responseText = GetMemberStat(member).StatString;
-                byte[] startSymbols = { 0xEF, 0xBB, 0xBF };
-                byte[] response = Encoding.GetEncoding("iso-8859-1").GetBytes(responseText);
-                var result = new byte[startSymbols.Length + response.Length];
-                startSymbols.CopyTo(result, 0);
-                response.CopyTo(result, startSymbols.Length);
-                MemoryStream ms = new MemoryStream(result);
-                ms.Seek(offset, SeekOrigin.Begin);
-                readBytes = (uint)ms.Read(buffer, 0, buffer.Length);
+        public int ReadFile(String filename, Byte[] buffer, ref uint readBytes, long offset, DokanFileInfo info) {
+            if(Path.GetFileName(filename)[0] != '@')
+                return -1;
+
+            var command = Path.GetFileName(filename);
+            var parameters = "";
+
+            try {
+                if (command.Contains(" ")) {
+                    var spacePos = command.IndexOf(' ');
+                    parameters = command.Substring(spacePos + 1);
+                    command = command.Substring(0, spacePos);
+                }
+
+                switch (command) {
+                    case "@LOG":
+                        Log(1, parameters);
+                        break;
+
+                    case "@SET_USERS":
+                        Array.Clear(pendingMembers, 0, pendingMembers.Length);
+                        parameters.Split(',').CopyTo(pendingMembers, 0);
+                        break;
+
+                    case "@ADD_USERS":
+                        parameters.Split(',').CopyTo(pendingMembers, pendingMembers.Length);
+                        break;
+
+                    case "@RUN":
+                        for (var i = 0; i < pendingMembers.Length; i++) {
+                            GetCachedMember(pendingMembers[i]);
+                        }
+                        break;
+                        
+                    case "@GET_USERS":
+                    case "@GET_LAST_STAT":
+                        string xml = "<users>";
+
+                        for (var i = 0; i < pendingMembers.Length; i++) {
+                            xml += GetMemberStat(pendingMembers[i]).StatString;
+                        }
+                        xml += "</users>";
+                        byte[] startSymbols = { 0xEF, 0xBB, 0xBF };
+                        byte[] response = Encoding.GetEncoding("iso-8859-1").GetBytes(xml);
+
+                        var result = new byte[startSymbols.Length + response.Length];
+                        startSymbols.CopyTo(result, 0);
+                        response.CopyTo(result, startSymbols.Length);
+                        MemoryStream ms = new MemoryStream(result);
+                        ms.Seek(offset, SeekOrigin.Begin);
+                        readBytes = (uint)ms.Read(buffer, 0, buffer.Length);
+                        break;
+                }
+
                 _firstError = false;
                 return 0;
             } catch(Exception) {
@@ -256,8 +309,6 @@ namespace wotStatMiniServer
             return 0;
         }
 
-        #endregion
-
         public int GetDiskFreeSpace(ref ulong freeBytesAvailable, ref ulong totalBytes,
                                     ref ulong totalFreeBytes, DokanFileInfo info) {
             freeBytesAvailable = 512*1024*1024;
@@ -269,6 +320,8 @@ namespace wotStatMiniServer
         public int Unmount(DokanFileInfo info) {
             return 0;
         }
+
+        #endregion
 
         private static void Main(string[] args) {
             Settings settings = LoadSettings();
