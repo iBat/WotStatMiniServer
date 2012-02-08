@@ -21,9 +21,10 @@ namespace wotStatMiniServer
                 ErrorTime = DateTime.MinValue;
             }
         }
-        private struct Settings {
+        public struct Settings {
             public int Timeout;
             public int LogLevel;
+            public string DriveLetter;
         }
         Dictionary<string, Member> cache = new Dictionary<string, Member>();
         private string proxyUrl;
@@ -32,15 +33,23 @@ namespace wotStatMiniServer
         private DateTime _unavailableFrom;
         private Settings _settings;
 
-        public StatServer() {
-            try {
-                _settings.LogLevel = Convert.ToInt32(ConfigurationSettings.AppSettings["logLevel"]);
-                _settings.Timeout = Convert.ToInt32(ConfigurationSettings.AppSettings["timeout"]);
-            } catch {
-                _settings.LogLevel = 1;
-                _settings.Timeout = 1000;
-            }
+        public StatServer(Settings settings) {
+            _settings = settings;
             Log(2, string.Format("LogLevel: {0}\r\nTimeout: {1}", _settings.LogLevel, _settings.Timeout));
+        }
+
+        private static Settings LoadSettings() {
+            Settings result;
+            try {
+                result.LogLevel = Convert.ToInt32(ConfigurationSettings.AppSettings["logLevel"]);
+                result.Timeout = Convert.ToInt32(ConfigurationSettings.AppSettings["timeout"]);
+                result.DriveLetter = ConfigurationSettings.AppSettings["driveLetter"];
+            } catch {
+                result.LogLevel = 1;
+                result.Timeout = 1000;
+                result.DriveLetter = "n";
+            }
+            return result;
         }
 
         private void Log(int level, string message) {
@@ -262,13 +271,15 @@ namespace wotStatMiniServer
         }
 
         private static void Main(string[] args) {
+            Settings settings = LoadSettings();
+            string mountPoint = string.Format(@"{0}:\", settings.DriveLetter);
+
             DokanOptions opt = new DokanOptions();
             opt.DebugMode = true;
-            string mountPoint = args.Length > 0 ? string.Format("{0}\\", args[0]) : "n:\\";
             opt.MountPoint = mountPoint;
             opt.ThreadCount = 5;
             Console.WriteLine("Now you can create symlink to drive {0} using\r\nmklink /D c:\\games\\World_of_Tanks\\res\\gui\\flash\\stat {0}", mountPoint);
-            int status = DokanNet.DokanMain(opt, new StatServer());
+            int status = DokanNet.DokanMain(opt, new StatServer(settings));
             switch (status) {
                 case DokanNet.DOKAN_DRIVE_LETTER_ERROR:
                     Console.WriteLine("Drvie letter error");
