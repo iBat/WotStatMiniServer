@@ -28,7 +28,7 @@ namespace wotStatMiniServer
             public string DriveLetter;
         }
         private Dictionary<string, Member> cache = new Dictionary<string, Member>();
-        private string[] pendingMembers = { };
+        private List<string> pendingMembers = new List<string>();
         private string proxyUrl;
         private bool _firstError,
             _unavailable;
@@ -93,52 +93,79 @@ namespace wotStatMiniServer
 
         #endregion
 
-        // TODO kill me
-        private Member GetMemberStat(string member) {
-            GetCachedMember(member);
-
-            return cache[member];
+        private string GetMembersStatBatch(List<string> members) {
+            GetCachedMembersBacth(members);
+            return BuildMembersXml(members);
         }
 
-        private void GetCachedMember(string member) {
-            if(cache.ContainsKey(member)) {
-                Member currentMember = cache[member];
-                if(!currentMember.HttpError) {
-                    Log(1, string.Format("CACHE - {0}", member));
-                    return;
+        private string BuildMembersXml(List<string> members) {
+            string xml = "<?xml version=\"1.0\" encoding=\"utf-8\"?><users>";
+
+            for (var i = 0; i < members.Count; i++)
+                xml += cache[members[i]].StatString;
+            xml += "</users>";
+            return xml;
+        }
+
+        private void GetCachedMembersBacth(List<string> members) {
+            List<string> forUpdate = new List<string>();
+
+            for(var i = 0;i < members.Count;i++) { 
+                var cur = members[i];
+                if(cache.ContainsKey(cur)) {
+                    Member currentMember = cache[cur];
+                    if(!currentMember.HttpError) {
+                        Log(1, string.Format("CACHE - {0}", cur));
+                        continue;
+                    }
+                    if(DateTime.Now.Subtract(currentMember.ErrorTime).Minutes < 5)
+                        continue;
+                    cache.Remove(cur);
+                    forUpdate.Add(cur);
+                } else {
+                    forUpdate.Add(cur);
                 }
-                if(DateTime.Now.Subtract(currentMember.ErrorTime).Minutes < 5)
-                    return;
-                cache.Remove(member);
             }
 
-            if(ServiceUnavailable())
+            // TODO check work with new batch requests
+            if(forUpdate.Count == 0 || ServiceUnavailable())
                 return;
 
             try {
-                proxyUrl = GetProxyUrl();
-                string url = string.Format("http://{0}/{1}.{2}", proxyUrl, member.ToUpper(), "xml");
+                var reqMembers = forUpdate.ToArray();
+                string url = string.Format("http://proxy.bulychev.net/polzamer-mod/1/2/{0}", string.Join(",", reqMembers));
 
                 WebRequest request = WebRequest.Create(url);
                 request.Credentials = CredentialCache.DefaultCredentials;
                 request.Timeout = _settings.Timeout;
                 HttpWebResponse response = (HttpWebResponse) request.GetResponse();
-                Log(1, string.Format("HTTP - {0}", member));
+                Log(1, string.Format("HTTP - {0}", reqMembers));
                 Stream dataStream = response.GetResponseStream();
                 StreamReader reader = new StreamReader(dataStream);
                 string responseFromServer = reader.ReadToEnd();
                 reader.Close();
                 dataStream.Close();
                 response.Close();
-                cache.Add(member, new Member(responseFromServer));
+
+                var resMembers = responseFromServer.Split(',');
+                for(var i = 0; i < forUpdate.Count; i++)
+                    cache.Add(forUpdate[i], new Member(ResponseToXml(forUpdate[i], resMembers[i])));
+
             } catch(Exception e) {
-                Log(1, string.Format("Exception: {0}\r\nPROXY: {1}", e.Message, proxyUrl));
+                Log(1, string.Format("Exception: {0}", e.Message));
                 ErrorHandle();
-                Member newMember = new Member("<user battles=\"1\" wins=\"0\"></user>");
-                newMember.HttpError = true;
-                newMember.ErrorTime = DateTime.Now;
-                cache.Add(member, newMember);
+                for(var i = 0;i < forUpdate.Count;i++) {
+                    Member newMember = new Member(string.Format("<user nick=\"{0}\" battles=\"1\" wins=\"0\"></user>", forUpdate[i]));
+                    newMember.HttpError = true;
+                    newMember.ErrorTime = DateTime.Now;
+                    cache.Add(forUpdate[i], newMember);
+                }
             }
+        }
+
+        private string ResponseToXml(string nick, string response) {
+            var percent = response.Substring(response.IndexOf('-') + 1);
+            return string.Format("<user nick=\"{0}\" battles=\"{1}\" wins=\"{2}\"></user>", nick, "100", percent);
         }
 
         /*
@@ -170,28 +197,22 @@ namespace wotStatMiniServer
                         break;
 
                     case "@SET_USERS":
-                        Array.Clear(pendingMembers, 0, pendingMembers.Length);
-                        parameters.Split(',').CopyTo(pendingMembers, 0);
+                        var users = parameters.Split(',');
+                        pendingMembers.Clear();
+                        pendingMembers.AddRange(users);
                         break;
 
                     case "@ADD_USERS":
-                        parameters.Split(',').CopyTo(pendingMembers, pendingMembers.Length);
+                        pendingMembers.AddRange(parameters.Split(','));
                         break;
 
                     case "@RUN":
-                        for (var i = 0; i < pendingMembers.Length; i++) {
-                            GetCachedMember(pendingMembers[i]);
-                        }
+                        GetCachedMembersBacth(pendingMembers);
                         break;
                         
                     case "@GET_USERS":
                     case "@GET_LAST_STAT":
-                        string xml = "<users>";
-
-                        for (var i = 0; i < pendingMembers.Length; i++) {
-                            xml += GetMemberStat(pendingMembers[i]).StatString;
-                        }
-                        xml += "</users>";
+                        string xml = GetMembersStatBatch(pendingMembers);
                         byte[] startSymbols = { 0xEF, 0xBB, 0xBF };
                         byte[] response = Encoding.GetEncoding("iso-8859-1").GetBytes(xml);
 
@@ -214,9 +235,20 @@ namespace wotStatMiniServer
         public int GetFileInformation(String filename, FileInformation fileinfo, DokanFileInfo info) {
             try {
                 int fileLength = 0;
-                if(Path.GetExtension(filename).ToLower() == ".xml") {
-                    string member = Path.GetFileNameWithoutExtension(filename);
-                    fileLength = GetMemberStat(member).StatString.Length + 3;
+                if(Path.GetFileName(filename)[0] == '@') {
+                    var command = Path.GetFileName(filename);
+                    var parameters = "";
+                    
+                    if (command.Contains(" ")) {
+                        var spacePos = command.IndexOf(' ');
+                        parameters = command.Substring(spacePos + 1);
+                        command = command.Substring(0, spacePos);
+                        if(command == "@GET_LAST_STAT") {
+                            string xml = GetMembersStatBatch(pendingMembers);
+
+                            fileinfo.Length = xml.Length + 3;
+                        }
+                    }
                 }
                 fileinfo.Attributes = FileAttributes.Archive;
                 fileinfo.CreationTime = DateTime.Now;
