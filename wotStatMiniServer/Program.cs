@@ -132,9 +132,9 @@ namespace wotStatMiniServer
                 return;
 
             try {
-                var reqMembers = forUpdate.ToArray();
-                string url = string.Format("http://proxy.bulychev.net/polzamer-mod/1/2/{0}", string.Join(",", reqMembers));
-
+                var reqMembers = string.Join(",", forUpdate.ToArray());
+                string url = string.Format("http://proxy.bulychev.net/polzamer-mod/1/2/{0}", reqMembers);
+                
                 WebRequest request = WebRequest.Create(url);
                 request.Credentials = CredentialCache.DefaultCredentials;
                 request.Timeout = _settings.Timeout;
@@ -203,7 +203,10 @@ namespace wotStatMiniServer
                         break;
 
                     case "@ADD_USERS":
-                        pendingMembers.AddRange(parameters.Split(','));
+                        users = parameters.Split(',');
+                        for (var i = 0; i < users.Length; i++ )
+                            if(!pendingMembers.Contains(users[i]))
+                                pendingMembers.Add(users[i]);
                         break;
 
                     case "@RUN":
@@ -215,8 +218,8 @@ namespace wotStatMiniServer
                         string xml = GetMembersStatBatch(pendingMembers);
                         byte[] startSymbols = { 0xEF, 0xBB, 0xBF };
                         byte[] response = Encoding.GetEncoding("iso-8859-1").GetBytes(xml);
-
                         var result = new byte[startSymbols.Length + response.Length];
+
                         startSymbols.CopyTo(result, 0);
                         response.CopyTo(result, startSymbols.Length);
                         MemoryStream ms = new MemoryStream(result);
