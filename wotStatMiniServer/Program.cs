@@ -29,7 +29,6 @@ namespace wotStatMiniServer
         }
         private Dictionary<string, Member> cache = new Dictionary<string, Member>();
         private List<string> pendingMembers = new List<string>();
-        private string proxyUrl;
         private bool _firstError,
             _unavailable;
         private DateTime _unavailableFrom;
@@ -60,13 +59,6 @@ namespace wotStatMiniServer
             if(level >= _settings.LogLevel) {
                 Console.WriteLine(message);
             }
-        }
-
-        private string GetProxyUrl() {
-            Random rnd = new Random(DateTime.Now.Millisecond);
-            string url = string.Format("stat-proxy-{0}.wot.bkon.ru", rnd.Next(1, 10));
-            Log(0, string.Format("SET PROXY: {0}", url));
-            return url;
         }
 
         private bool ServiceUnavailable() {
@@ -110,7 +102,7 @@ namespace wotStatMiniServer
         private void GetCachedMembersBacth(List<string> members) {
             List<string> forUpdate = new List<string>();
 
-            for(var i = 0;i < members.Count;i++) { 
+            for(var i = 0; i < members.Count; i++) { 
                 var cur = members[i];
                 if(cache.ContainsKey(cur)) {
                     Member currentMember = cache[cur];
@@ -127,22 +119,25 @@ namespace wotStatMiniServer
                 }
             }
 
-            // TODO check work with new batch requests
             if(forUpdate.Count == 0 || ServiceUnavailable())
                 return;
 
             try {
                 var reqMembers = string.Join(",", forUpdate.ToArray());
-                string url = string.Format("http://proxy.bulychev.net/polzamer-mod/1/2/{0}", reqMembers);
+                var url = string.Format("http://proxy.bulychev.net/polzamer-mod/1/2/{0}", reqMembers);
+
+                Log(1, string.Format("HTTP - {0}", reqMembers));
                 
                 WebRequest request = WebRequest.Create(url);
                 request.Credentials = CredentialCache.DefaultCredentials;
                 request.Timeout = _settings.Timeout;
-                HttpWebResponse response = (HttpWebResponse) request.GetResponse();
-                Log(1, string.Format("HTTP - {0}", reqMembers));
+
+                HttpWebResponse response = (HttpWebResponse)request.GetResponse();
+
                 Stream dataStream = response.GetResponseStream();
                 StreamReader reader = new StreamReader(dataStream);
                 string responseFromServer = reader.ReadToEnd();
+
                 reader.Close();
                 dataStream.Close();
                 response.Close();
@@ -167,15 +162,6 @@ namespace wotStatMiniServer
             var percent = response.Substring(response.IndexOf('-') + 1);
             return string.Format("<user nick=\"{0}\" battles=\"{1}\" wins=\"{2}\"></user>", nick, "100", percent);
         }
-
-        /*
-     *  "@LOG <string>" - логгирование строки (как бы замена trace()). Можно не реализовывать.
-        "@SET_USERS player1[,player2,...]" - Установка текущего списка игроков (пробел после команды).
-        "@ADD_USERS player1[,player2,...]" - Добавление игроков к текущему списку (пробел после команды)
-        "@RUN" - запуск запроса на получение статистики
-        "@GET_USERS" - получить текущий список игроков (будет использоваться в OTM)
-        "@GET_LAST_STAT" - получить последнюю полученную статистику
-     * */
 
         public int ReadFile(String filename, Byte[] buffer, ref uint readBytes, long offset, DokanFileInfo info) {
             if(Path.GetFileName(filename)[0] != '@')
@@ -209,20 +195,26 @@ namespace wotStatMiniServer
                                 pendingMembers.Add(users[i]);
                         break;
 
-                    case "@RUN":
-                        GetCachedMembersBacth(pendingMembers);
-                        break;
-                        
                     case "@GET_USERS":
+                        var memberList = string.Join(",", pendingMembers.ToArray());
+                        byte[] result = Encoding.GetEncoding("iso-8859-1").GetBytes(memberList);
+                        var ms = new MemoryStream(result);
+
+                        ms.Seek(offset, SeekOrigin.Begin);
+                        readBytes = (uint)ms.Read(buffer, 0, buffer.Length);
+                        break;
+
+                    case "@RUN":
                     case "@GET_LAST_STAT":
-                        string xml = GetMembersStatBatch(pendingMembers);
+                        var xml = GetMembersStatBatch(pendingMembers);
                         byte[] startSymbols = { 0xEF, 0xBB, 0xBF };
-                        byte[] response = Encoding.GetEncoding("iso-8859-1").GetBytes(xml);
-                        var result = new byte[startSymbols.Length + response.Length];
+                        var response = Encoding.GetEncoding("iso-8859-1").GetBytes(xml);
+
+                        result = new byte[startSymbols.Length + response.Length];
+                        ms = new MemoryStream(result);
 
                         startSymbols.CopyTo(result, 0);
-                        response.CopyTo(result, startSymbols.Length);
-                        MemoryStream ms = new MemoryStream(result);
+                        response.CopyTo(result, startSymbols.Length);                        
                         ms.Seek(offset, SeekOrigin.Begin);
                         readBytes = (uint)ms.Read(buffer, 0, buffer.Length);
                         break;
@@ -242,14 +234,20 @@ namespace wotStatMiniServer
                     var command = Path.GetFileName(filename);
                     var parameters = "";
                     
-                    if (command.Contains(" ")) {
+                    if(command.Contains(" ")) {
                         var spacePos = command.IndexOf(' ');
                         parameters = command.Substring(spacePos + 1);
                         command = command.Substring(0, spacePos);
-                        if(command == "@GET_LAST_STAT") {
-                            string xml = GetMembersStatBatch(pendingMembers);
+                        switch(command) {
+                            case "@GET_USERS":
+                                fileinfo.Length = string.Join(",", pendingMembers.ToArray()).Length;
+                                break;
 
-                            fileinfo.Length = xml.Length + 3;
+                            case "@RUN":
+                            case "@GET_LAST_STAT":
+                                string xml = GetMembersStatBatch(pendingMembers);
+                                fileinfo.Length = xml.Length + 3;
+                                break;
                         }
                     }
                 }
